@@ -3,6 +3,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import functools
 import os
 import stat
 from collections import namedtuple
@@ -22,10 +23,13 @@ from .errors import NotReady
 from .errors import reraise
 from .functions import bestrelpath
 from .functions import exec_
+from .functions import logger_preexec
 from .functions import show_runaway_processes
+from .functions import supervisor_preexec
 from .functions import symlink_if_necessary
 from .functions import terminate_runaway_processes
 from .subprocess import check_call
+from .subprocess import Popen
 
 
 def flock(path):
@@ -248,37 +252,29 @@ class Service(namedtuple('Service', ['path', 'scratch_dir', 'default_timeout']))
                 os.mkfifo(log_fifo_path)
 
             if not self.is_logger_running():
-
-                if os.fork() == 0:
-                    log_fifo_reader = os.open(log_fifo_path, os.O_RDONLY)
-                    devnull = os.open('/dev/null', os.O_WRONLY)
-                    os.dup2(log_fifo_reader, 0)
-                    os.dup2(devnull, 1)
-                    os.dup2(devnull, 2)
-                    os.closerange(3, 999)
-
-                    os.execvp(
-                        's6-supervise',
-                        (
-                            's6-supervise',
-                            self.path.join('log').strpath,
-                        ),
-                    )
-
-            if os.fork() == 0:
-                log_fifo_writer = os.open(log_fifo_path, os.O_WRONLY)
-                os.dup2(os.open('/dev/null', os.O_RDONLY), 0)
-                os.dup2(log_fifo_writer, 1)
-                os.dup2(log_fifo_writer, 2)
-                os.environ.update(self.supervise_env(lock, debug=False))
-
-                os.execvp(
-                    's6-supervise',
+                Popen(
                     (
                         's6-supervise',
-                        self.path.strpath,
+                        self.path.join('log').strpath,
                     ),
+                    preexec_fn=functools.partial(
+                        logger_preexec,
+                        log_fifo_path,
+                    ),
+                    close_fds=True,
                 )
+
+            Popen(
+                (
+                    's6-supervise',
+                    self.path.strpath,
+                ),
+                env=self.supervise_env(lock, debug=False),
+                preexec_fn=functools.partial(
+                    supervisor_preexec,
+                    log_fifo_path,
+                ),
+            )
 
     def foreground(self):
         with self.flock() as lock:
