@@ -416,9 +416,6 @@ class PgctlApp(object):
         else:
             os.dup2(2, 1)  # send log to stderr
             failapp.log(interactive=False)  # doesn't return
-        if state == 'start':
-            # we don't want services that failed to start to be 'up'
-            failapp.stop()
 
         pgctl_print()
         pgctl_print('There might be useful information further up in the log; you can view it by running:')
